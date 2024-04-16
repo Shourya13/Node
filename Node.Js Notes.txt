@@ -1,0 +1,1252 @@
+• V8 Project : It is an open source JS engine created by Google. Purpose of this project is to be able to execute JS code outside of the browser. It is written in 70% C++ and 30% JS
+
+• LibUV :  libuv is a C library originally written for Node.js to abstract non-blocking I/O operations. For example, If a program is querying the database, the CPU sits idle until the query is processed and the program stays at a halt, thereby causing wastage of system resources. To prevent this, libuv is used in Node.js which facilitates a non-blocking I/O. It also has mechanisms to handle services like File System, DNS, network, child processes, pipes, signal handling, polling, and streaming.
+To perform blocking operations that can’t be done asynchronously at OS level, libuv also includes a thread pool to distribute CPU loads. 
+
+• Purpose of Node : Node gives is a nice interface to use to relate our JavaScript side of our application to the actual C++ that is running on our computers to actually interpret and ececute our JS code.
+Node also provides APIs  for working with file system paths, HTTP, crypto etc. 
+
+• Threads : Whenever we run programs on our computers, we start something called as a "Process". A "Process" is an instance of a computer program that is being executed. Within a single process, we can have multiple "Threads" which can be thought of as a Todo list that has some number of instructions, that need to be executed by the CPU of the computer. This "Thread" is given to the CPU and the CPU will attempt to run every instruction on it one by one. A single "Process" can have multiple threads inside of it. To decide which thread to execute next, we use something called "Scheduling", which refers to out operating system's ability to decide which thread to process at any given instant in time. 
+
+• Event Loop : Whenever we start up a Node program, node automatically creates one thread and then executes all of our code onside of that one single thread. Inside of this single thread, there is something called as Event loop which can be thought of as a control structure that decides what our one thread should be doing at any given point in time. This event loop is the absolute core of evry node program. So each node progran has exactly one event loop. Basic structure of a Node Evnet loop is as follows : 
+    // Node lifecycle starts (let filename of this program be myFile.js)
+
+    const pendingTimers = [] ; // A list containing 
+    const pendingOSTasks = [] ;
+    const pendingOperations = [] ; 
+
+    //New timers, tasks, operations are recorded from myFile running.
+    myFile.runContents();
+
+    function shouldContinue() {
+        //Inside this function, node performs 3 checks. 
+
+        1. Check 1 : Any pending setTimeout, setInterval or setImmediate 
+        2. Check 2 : Any pending OS tasks like server listening to a port.
+        3. Check 3 : Any pending long running operations like 'fs module'
+
+        return pendingTimers.length || pendingOSTasks.length || pendingOperations.length //This means if any of the lists have some tasks, this will return true, else false.
+    }
+
+    //Lets say that entire body of this while loop runs in one 'tick'
+    while(shouldContinue()) {
+        //1. Node looks at the pendingTimers and sees if any functions are are ready to be called. (setTimeout and setInterval)
+
+        //2. Node looks are pendingOSTasks and pendingOperations and calls relevant callbacks.
+
+        //3. During this step, node pauses execution temporarily and during this pause, node just sits around and waits for new events to occur. These can be : 
+            -> whenever a new pendingOSTask is done
+            -> whenever a new pendingOperations is done
+            -> whenever a timer is about to complete
+
+        //4. Node again looks at pendingTimers and at this step, it only looks at functions registered with setImmediate function calls.
+
+        //5. Handle any close events. For example when we use readStream, we can write cleanup code for when the stream reading will be over.
+    }
+
+    // Node exit back to terminal
+
+Note : Node event loop is single threaded but some of the node frameworks/ standard libraries are not single threaded as they run outside of our event loop and outside of that single thread. That is, for some standard library function calls, the C++ side of node and libUV decides to do expensive calculations outside of the event loop entirely. In this case, they make use of something called as a "Thread Pool" which is a series of threads which can be used for running computationally intensive tasks. By default, LibUV creates four threads in this thread pool.
+
+Note : HTTP requests do not touch thread pools at all.
+In case of File system calls, if all the threads are busy, File system calls will be made but the threads making the call, will not wait for the hard disks to respond. The thread will take up a new task. Once any other thread will get free, it will take up that File system call. 
+So in case, we have 4 threads and we are making calls in the following order from our program : 
+    1. HTTP req
+    2. FS req
+    3. Hashing function x4 times
+
+we will get response in order : 
+    1. HTTP response
+    2. Hashing response
+    3. FS response
+    4. Hashing response x3 times
+
+This is is because HTTP req does not go through thread pool and will give response based upon the response time of API. 
+After that file system calls and hashing calls will be made. 
+Thread 1 will take up the file system call and ask hard drive for data. Thread 2, 3, 4 will start processing hashes first 3 hash operations. After thread 1 makes the FS request, it will not wait for the result and take up the 4th hash operation. Now when any one of the threads will complete their hashing operations and print the result, that thread will then start working on the response of FS request and will print the FS response. After that, rest of the Hashing operations will be finished and will get print.
+
+• Multi threading in node : We have the "Main Thread" that runs in the V8 engine. The also have LibUV library. The LibUV lets node to spawn some extra threads. In total we have a total of 7 threads including the "Main Thread", out of which 2 of them are reserved for garbage collection, and 4 others respond whenever is needed based upon the type of task (eg. I/O operation like DB Query or have some network data transmission). So, for these sort of tasks, the node behaves asynchronously as these tasks are internally handled by V8 in threads other than the main thread.
+For processes which are CPU bound and are not handled by V8, are still run in a synchronous fashion.
+
+• Worker threads : When we are dealing with CPU bound tasks (for example loops), the tasks will be executed by the "main thread" and will not be able to spawn extra threads (as done by V8), the tasks can completely clog the main thread if they are very time consuming (eg. One such taks can be a loop running 20 billion times). This will block the main thread and till it gets free, it will not be able to process any of the client requests. 
+The solution of this is to create separate worker threads for such processes using the `worker_threads` module provided by nodejs. Using this, we can manually create copies of our main thread which are called "worker threads" and can communicate within the threads.
+
+We can extract the blocking code (i.e. the code which takes long time to execute) and keep it in a separate file. Eg: In "worker.js" we have following code : 
+    const { parentPort } = require("worker_threads");
+
+    let counter = 0;
+    for (let i = 0; i < 10000000000; i++) { //This is blocking code
+    counter++;
+    }
+
+    parentPort.postMessage(counter);
+
+Now in place of this blocking call, we can write a code to spawn a new worker thread and wait for an event from this "worker.js" file. Eg.
+    const { Worker } = require("worker_threads");
+
+    app.get("/", (req, res) => { 
+        const worker = new Worker("./examples/worker.js");
+
+        worker.on("message", (data) => {
+            res.status(200).send(`Result is ${data.toExponential()}`);
+        });
+
+        worker.on("error", (error) => {
+            res.status(404).send(`Error occured`);
+        });
+    });
+
+We can send data to worker processes by using "workerData" and we can also subdivide the blocking code and run them parallely on different threads, each assigned to different cores of our CPU. We can change the code in "worker.js" as : 
+    const { parentPort, workerData } = require("worker_threads");
+
+    let counter = 0;
+
+    for (let i = 0; i < 10000000000 / workerData.thread_count; i++) {
+        counter++;
+    }
+
+    parentPort.postMessage(counter);
+
+And now, in place of blocking code, we can write:
+    const { Worker } = require("worker_threads");
+
+    const THREAD_COUNT = 8;
+
+    function createWorker() {
+        return new Promise((resolve, reject) => {
+            const worker = new Worker("./examples/eight-workers.js", {
+                workerData: {
+                    thread_count: THREAD_COUNT,
+                },
+            });
+
+            worker.on("message", (data) => {
+            resolve(data);
+            });
+
+            worker.on("error", (error) => {
+            reject(`Error occured`);
+            });
+        });
+    }
+
+    app.get("/eightWorkers", async (req, res) => {
+        const workerPromises = [];
+
+        for (let i = 0; i < THREAD_COUNT; i++) {
+            workerPromises.push(createWorker());
+        }
+
+        const thread_results = await Promise.all(workerPromises);
+        const total = thread_results.reduce((acc, curr) => curr + acc, 0);
+
+        res.status(200).send(`Total is ${total}`);
+    });
+
+• Cluster mode in Node : It is used to start multiple copies of node that are all running our server inside them. The takeaway here is that by starting up multiple copies of node, we get multiple instances of the event loop, and so making node kind of milti threaded.
+Whenever we start our NodeJs application, it gets assigned to a processes which runs on one of the multiple cores that our machine have. When the client makes a request, the request goes to that nodejs server which is running on one of the cores. But when multiple concurrent requests will come, nodejs, running on a single core, will not be able to handle all that load. Also, the remaining cores will remain unused.
+In Clustering, we can use all these multiple cores of CPU. 
+When we start to use clustering inside a node application, we're gonna be starting up multiple node process in different cores of the CPU. There is always going to be one parent process (kind of an overarching process) called the "Cluster Manager" which acts as a load balancer. The cluster manager is responsible for redirecting the incoming request to one of these multiple individual node instances using round robin algorithm, and also responsible for monitoring the health of individual instances of our node servers that we launch at the same time on our computer.
+The cluster manager itself doesn't actually executes any server code. So in other words, cluster manager is not really responsible for handling incoming requests or fetching data from database etc. Instead teh cluster manager is responsible for monitoring the health of each of the individual node instances that it creates. So the cluster manager can start instances, stop them , restart them, it can send them data and other administrative tasks.
+When we normally run a node file the flow looks something like below : 
+    "execute node App.js command" => App.js runs => Node instance gets created
+
+But when using clustering : The first instance that gets launched is called (or we can say becomes) the cluster manager. The cluster manager is then responsible for creating worker instances and these worker instances are actually responsible for processing those incoming requests.
+    
+    "Executes node App.js command" => App.js runs => "Cluster Manager" is created => "cluster.fork()" to create worker instances => worker instances
+
+We can use clustering by importing bulit in node package called 'cluster'. The "fork()" function in clutser manager, node internally goes back to the App.js file and executes it a second time. This creates another instance of our server which is the worker instance.
+While using this cluster library, the first instance of the server (i.e., when we run the server first time) is made the cluster manager. The "isPrimary" property of the cluster manager will return true and for worker instances (i.e., instances other than the first one) will return false. This property can be used to differentiate if the instance is cluster manager or worker instance and hence this single property decides what that perticualr instance should do when the App.js file is executed. 
+
+Note. It is advised that we should keep the no. of worker instances equivalent to the no. of physical or logical CPU cores of our system. 
+
+• Cluster management with pm2 (process manager) : "pm2" is an open source Node.js production process manager with a built-in Load Balancer. This works as the cluster manager for our applications in production and so we need not to setup a cluster manager by ourselfs. This 'pm2' process manager is a cluster management solution. So it can spawn multiple instances of our application and manage the health of every single one of them. So if one of the instances crashes, it is going to automatically restart that instance.
+To start the application with pm2, we nee to first install the 'pm2' using 'npm'. After that we need to go to our project directory and type command : 
+    1. To start server in cluster mode : pm2 start App.js -i 0
+    2. To start server normally : pm2 start App.js
+
+To stop the running servers (let' ssay name of application is App), we use command : 
+        pm2 delete App
+
+Note. : The argument '-i 0' tells pm2 to decide  how many instances of your application it should spawn based on the number of logical CPU cores available. So in a dual core processer where each core can process 2 threads, the no. of instances spawnned will be 2x2 = 4.
+
+Other commands with pm2 can be : 
+    1. pm2 list : Gives summary of what's going on with your current cluster.
+    2. pm2 show App : Here App is the name of application and this command will give a detailed info about what is going on in that set of children. 
+    3. pm2 monit : Gives a dashboard where we can toggle through different processes and we can also check logs. 
+
+• Worker Threads vs Cluster : Use the clustering when we want our node js application to be highly available and scalable and use Worker Threads if we want to be able to process CPU intensive tasks in one go.
+
+• MongoDB Working : Whenever we execute a mongoose query, it eventually sends a query to our running mongodb database. Mongodb has something internally called as an "index". An index is matched up with individual collection (where a "collection" is group of similar records). An index is an efficient data structure for looking up sets of records of that collection. Indices are efficient because they allow us to not look at every single record inside the collection to figure out which one we are trying to find. Instead, the index allows to directly find the record that we are looking for. So rather then checking all the records one by one, we can directly fetch the record that we are looking for.
+Whenever an index is created for a mongo collection, an index targets an individual property that exists on these records. Although, indices have a lot of flexibility and can be tailored to look at multiple properties together, but by default, they look at only one property which is "_id" property of the records.
+
+• MongoDB Disadvantages : Suppose we have the indexing based upon the "_id" property only, for the records. But if, we make a query where we ask for a record for a particular "title", then mongodb on't be able to directly fetch the record as the indexing is done based on the "_id" property and not based on the "title" property and so, no fast lookup of the data will be there. Hence, mongodb will have to do a "Full Collection Scan" which means we will have to look at every single record inside of a given collection which is an extremely expensive operation and which is a big performance concern.
+There are 2 ways to resolve this issue. 
+    1. Add in an index field so we can have multiple indices for a given collection. But this impacts and slows the process of writing into the collection. In other words, for every additional index that we add to a collection, it takes longer to write records into that collection. Also, adding more indices consumes more disk space and memory as well.
+
+    2. Caching : We can use caching and add a "Caching Layer" using "Cache Server". So, anytime mongoose issues a query to mongodb server, the query will go through this cache server. The cache server is going to check and see if that exact query has ever been issued before. If it hasn't, then the cache server will take the query, it's going to send it over the mongodb and, mongodb is going to execute the query. The result of that query then goes back to the cache server, where cache server is going to store the result of that query on itself and also forwards the result to mongoose.
+    Now, anytime that same exact query is issued again, the cache server is going to directly return the result from its cache rather than forwarding it to mongodb for executing. We can use "Redis" to store our cache data. 
+
+• Connecting to mongoDB using Mongoose : 
+    const mongoose = require("mongoose");
+
+    mongoose.connect("mongodb://localhost:27017/dbName");
+
+    const userScheme = new mongoose.Schema({
+        googleId: String,
+        displayName: String,
+    });
+
+    const UserModel = mongoose.model("collectionName", userScheme);
+
+    app.get("/", (req, res) => {
+            UserModel.find({}).then((data) => {
+            res.json(data);
+        });
+    });
+
+• Redis : Redis (REmote DIctionary Server) is an open-source, in-memory data store that's used as a database, cache, message broker, and streaming engine. 
+In-memory data stores, also known as in-memory databases (IMDBs), use the computer's main memory (RAM) to store data, instead of traditional disk-based storage. This approach improves data access and processing speed by reducing I/O overhead.
+This also means that once the machine is turned off, restarted or anything like that, all the data that sits inside that is instantly deleted and wiped.
+Redis stores data in a key-value pair. To set the value using 'redis' node library, we use :
+    set('myKey', 'myValue')
+And to fetch a value, we use : 
+    get('myKey', (err, val) => {
+        console.log(val); // Output: myValue
+    })
+
+We can also have a nested key-value pair where the the outer key will be pointing to a key-value pair table and then inner keys can be used to fetch individual values from that table. 
+For this nested key-value pairs, we use : hset(key, subkey, value)
+    eg. : 
+        hset('colors', 'red', '#ff0000')
+
+And for fetching we use : hget(key, subkey, callback)
+    eg. : 
+        hget('colors', 'red', (err, value) => console.log(value))
+
+• __dirname and __filename : "__dirname" gives the full path to the directory that we are using and "__filenme" gives the full path of the file that we are in.
+
+• path module : It provides utilities for working with file and directory paths. Eg.: 
+    const path = require("path");
+
+    console.log("the path name is", path.basename(__filename));
+
+Eg. 2 : 
+    const imgDirectory = path.join(__dirname, "assets", "files", "images");
+
+    console.log(imgDirectory); //prints "C:\Users\shourya13\Desktop\Notes\Node\myApp\assets\files\images"
+
+• process Object : It contains info about the current process as well as the tools which allow us to interact with those processes. Eg. : 
+    console.log(process.pid);
+    console.log(process.versions.node);
+
+"process.argv" are the argument variables that are sent to the process when we run it. It is an array which contains everything that we typed while running the process. Suppose we used the following command to run the node application : 
+    node App.js alpha 123
+
+then the value of "process.argv" will be : 
+    [
+        'C:\\Program Files\\nodejs\\node.exe',
+        'C:\\Users\\shourya13\\Desktop\\Notes\\Node\\myApp\\App.js',
+        'alpha',
+        '123'
+    ]
+
+As, 1st thing we typed was "node" and so we have the corrosponding entry in the array which is full path to node. 
+2nd thing was the file name "App.js" and so in array, we have 2nd element as the path of file.
+3rd one was the string "alpha" and 4th was string "123"
+
+Another Eg : 
+    const grab = (flag) => {
+        let indexAfterFlag = process.argv.indexOf(flag) + 1;
+        return process.argv[indexAfterFlag] || "";
+    };
+
+    const greeting = grab("--greeting");
+    const user = grab("--user");
+
+    console.log(`${greeting}, ${user}!`);
+
+And if you run this script like below:
+    node App.js --greeting "Hi" --user "Shourya Mishra"
+
+you will get : Hi, Shourya Mishra!
+
+• process.stdin and process.stdout : These two objects provides us a way to communicate with this process while it is running. 
+    1. Process.stdout : It is a writable stream and it implements a write method. So we can use this write method to send data out of out program. Eg. : 
+        process.stdout.write("Hello World"); //Prints "Hello World" in console
+
+    2. Process.stdin : The stdin property of the process object is a Readable Stream. It uses on() function to listen for the event. First argumnet is the type of event and 2nd one is the handler function. Eg. : 
+        process.stdout.write("What is your name ? \n");
+
+        process.stdin.on("data", (name) => {
+            console.log(`Hi ${name.toString().trim()}`);
+
+            process.exit()
+        }); 
+
+        process.on("exit", () => {
+            console.log("Byeee!!!");
+        });
+
+
+    This will print "What is your name ?" and will wait for user to type in something. once typed, it will print "Hi <what ever user has typed>". We have used "process.exit()" as without it, the process will not terminate and every time user types in something new, it will keep on printing that, till the user will kill the process by 'ctrl + c'
+
+• Timing functions : These are "setTimeout()", "clearTimeout()", "setInterval()" & "clearInterval()". These work similar to the ones we have in browsers. Eg. :
+    const waitTime = 5000;
+
+    const waitInterval = 500;
+    let currentTime = 0;
+
+    const incTime = () => {
+        currentTime += waitInterval;
+
+        const p = Math.floor((currentTime / waitTime) * 100);
+
+        process.stdout.clearLine();
+        process.stdout.cursorTo(0);
+        process.stdout.write(`Waiting... ${p} %`);
+    };
+
+    const interval = setInterval(incTime, waitInterval);
+
+    const timerFinished = () => {
+        clearInterval(interval);
+        process.stdout.clearLine();
+        process.stdout.moveCursor(0);
+        console.log("done");
+    };
+
+    setTimeout(timerFinished, waitTime);
+
+• Node core modules : Just like 'path' module, Node has some more core modules like :-
+    1. Util  Module : 
+        const util = require("util");
+
+        util.log(__filename)
+
+    2. v8 module : 
+        const v8 = require("v8");
+
+        console.log(v8.getHeapStatistics());  // Prints memory statistics of the V8 heap in a JSON-like object.
+
+    3. Readline module : It is a module that can be used to build an application that would ask questions to a terminal user. It is an interface between readable and writable streams that allows us to easily write code that Eg: 
+        const readline = require("readline");
+
+        const rl = readline.createInterface({
+            input: process.stdin,
+            output: process.stdout,
+        });
+
+        rl.question("How are you ? ", (answer) => {
+            console.log("Your answer :", answer);
+        });
+
+• Export : Exporting can be by using module.exports. Eg.: 
+    let counter = 0;
+
+    const inc = () => {
+        ++counter;
+    };
+
+    const dec = () => {
+        --counter;
+    };
+
+    const getCount = () => {
+        return counter;
+    };
+
+    module.exports = {
+        inc,
+        dec,
+        getCount,
+    };
+
+then to impport it : 
+    const counter = require("./examples/counter export");
+
+    counter.inc();
+    counter.inc();
+    counter.inc();
+
+    const counterValue = counter.getCount();
+
+    console.log(counterValue); //3
+
+• Events and eventEmitter : EventEmitter is a powerful tool that ships with node.js. It is node's implementation of pub - sub sedign pattern and it gives us a mechanism of emitting events and wiring up listeners and handlers for those events. Eg. : 
+    const events = require("events");
+
+    const emmiter = new events.EventEmitter();
+
+    emmiter.on("customEvent", (msg, user) => {
+    console.log(`${user} : ${msg}`);
+    });
+
+    emmiter.emit("customEvent", "Hello World", "Computer");
+    emmiter.emit("customEvent", "That's cool", "Shourya");
+
+• Fs module : The fs module can be used to list file and directories, create new files and directories, stream files, watch files, modify file permissions and other file related operations.
+After importing the module by : 
+    const fs = require("fs");
+
+We can do following operations : 
+    1. Read files and folders from a directory : 
+
+        const files = fs.readdirSync("./examples"); //'files' stores a list of files and folders in the 'examples' directory. This is a synchronous operation.
+        console.log(files);
+
+        fs.readdir("./examples", (err, list) => {
+        console.log(list);
+        }); // this is the async implementation of the above function and it takes a callback function as second argument, rather than returning the files list. 
+
+    2. Read contents of a file : 
+        const text = fs.readFileSync("./examples/counter export.js", "UTF-8"); //this takes path and encoding of the file and returns the contents of file.
+
+        console.log(text);
+
+        fs.readFile("./examples/counter export.js", "UTF-8", (err, text) =>
+        console.log(text)
+        ); // this alse reads contents of the file but in async manner.
+
+    3. Create a new file and write to it : 
+        const mdText = `
+            # This is a new file
+
+            We can write anything over here.
+
+            * We know fs.readfile 
+        `;
+
+        fs.writeFile("./examples/notes.md", mdText.trim(), (err) => {
+            if (err) throw err;
+        });
+
+    4. Check and create  directories:
+        if (fs.existsSync("assets")) { // Returns true if dir exists
+            console.log("Dir already exists");
+        } else {
+            fs.mkdir("assets", (err) => {
+                if (err) throw err;
+            }); //If dir exists, it throws error. So need to handle the error
+        }
+
+    5. Append to a file : 
+        const colorData = [
+            {
+                name: "red",
+                hex: "#ff0000",
+            },
+            {
+                name: "green",
+                hex: "#00ff00",
+            },
+            {
+                name: "blue",
+                hex: "#0000ff",
+            }
+        ];
+
+        colorData.forEach((color) => {
+            fs.appendFile(
+                "./assets/notes2.md",
+                `${color.name} : ${color.hex} \n`,
+                (err) => {
+                if (err) throw err;
+                }
+            ); //If the file doesn't exist, this will create a file and append to it.
+        });
+
+    6. Rename and move a file : 
+        fs.renameSync("./assets/newName.md", "./assets/newName2.md"); //takes filename and new name as arguments
+
+        fs.rename("./assets/notes2.md", "./assets/newName.md"); //this is the async implementation 
+
+        //To move a file, keep the fileName as it is and change only the directory in rename() 
+
+        fs.rename("./assets/newName2.md", "./examples/newName2.md", (err) => {
+            if (err) throw err;
+        });
+
+    7. Remove a dir : 
+
+        fs.readdirSync("./assets").forEach((item) => fs.unlinkSync(`./assets/${item}`)); // Both the functions given below can't remove dir if they contain  files or sub-directories and will throw err if tried to do so. Therefore, we need to delete all of the files and dirs first before deleting the parent dir. Here we are only deleting files.
+
+        fs.rmdirSync("./assets"); 
+
+
+
+        fs.rmdir("./assets", (err) => {
+            if (err) throw err;
+        });
+
+
+    8. Delete a file : 
+        fs.unlinkSync("./examples/newName2.md");
+
+        fs.unlink("./assets/notes.md", (err) => {
+            if (err) throw err;
+        }); //async implementation
+
+• Buffers : These are the temporarily storage spot for a chunk of data that is being transferred from one place to another. The buffer is filled with data and then passed along, transferring small amoumts of data at a time. Eg. : 
+    const buff = Buffer.from("ABC");
+
+    console.log(buff); //<Buffer 41 42 43>
+    console.log(buff[0]); //65
+    console.log(buff[1]); //66
+    console.log(buff[2]); //67
+
+    console.log(buff.toString()); //ABC
+
+• Readable file streams : The "Stream" interface provides us with a technique to read and write data. We can use it to read and write data to files, to communicate with internet, to communicate with other processes etc. Reading files as streams causes your node.js application to use less memory because instead of reading everything all at once, and loading it into a buffer, we are reading files bit by bit and chunk by chunk. Eg. : 
+
+    const readStream = fs.createReadStream("./assets/someLargeFile.md", "UTF-8");
+
+    //const readStream = fs.createReadStream("./assets/ someLargeFile.md", {
+        encoding: "UTF-8", 
+        highWaterMark: 2, //this defines the max number of bytes per chunk
+    }); //can also be written like this
+
+    readStream.on("data", (chunk) => {
+    console.log(`I read ${chunk.length - 1} characters of text`);
+    });
+
+    readStream.once("data", (chunk) => {
+        console.log(chunk);
+    }); //readStream.once() runs only once
+
+    readStream.on("end", (chunk) => {
+        console.log("That's all folks!");
+    }); // This event gets triggered at the end after we are done with reading stream
+
+
+• Writable file streams : 
+    const writeStream = fs.createWriteStream("./assets/lorem.md", "UTF-8");
+
+    process.stdin.on("data", (data) => { //This line is to read data from the console
+    writeStream.write(data); //This is the line to write stream
+    });
+
+As the read and write streams are made wo work with other streams, we can also pipe these streams with other streams like process.stdin. to achieve similar results as above example Eg.: 
+    process.stdin.pipe(writeStream);
+
+• Duplex Streams : Duplex streams are streams that allow both reading and writing of data. They are essentially a combination of Readable and Writable streams. Duplex streams are commonly used for network communication and other scenarios where both reading and writing are necessary. 
+
+• Transform Streams : Transform streams are a special type of Duplex stream that allows data to be modified as it flows through the stream. They can be used for tasks such as compression, encryption, or data manipulation. Transform streams have a writable side and a readable side, allowing data to be modified as it is being read from the source.
+
+In addition to these four main types of streams, there are also other types of streams that are built on top of these basic stream types, such as object mode streams and pause/resume streams.
+
+• Child process module : It allows us to execute external processes in your environment. In other words, our node.js app can communicate and run other applications within the environment that it is hosted. Eg.: 
+    1. Execute commands : 
+        cp.exec("start https://www.google.com"); // Executes a command
+
+        cp.exec("dir", (err, data, stderr) => {
+            console.log(data);
+        }); // Has callback functions in case the command returns any data. 'stderr' is the optional argument which holds the error which was returned by the command executed by the 'exec()'
+
+    2. Create child processes : exec() can only handle sync process and it is not ment to handle async processes. Lets assume there is a file './examples/simpleConsole.js' with a console.log() statement. 
+        const mySimpleApp = cp.spawn("node", ["examples/simpleConsole.js"]); //Takes first argument as first parameter and rest of the arguments as array.
+
+        mySimpleApp.stdout.on("data", (data) => {
+            console.log(`From simple app :  ${data}`); //prints "From simple app :  This is from simple console"
+        });
+
+        mySimpleApp.on("close", () => {
+            console.log("Simple app closed");
+        });
+
+        mySimpleApp.stdin.write("Hello World\n"); //to send data to process
+
+• Explain MVC Architecture : The Model-View-Controller (MVC) framework is an architectural/design pattern that separates an application into three main logical components Model, View, and Controller. Each architectural component is built to handle specific development aspects of an application. It isolates the business logic and presentation layer from each other.
+The main goal of this design pattern was to solve the problem of users controlling a large and complex data set by splitting a large application into specific sections that all have their own purpose. 
+Features of MVC :
+    • It provides a clear separation of business logic, Ul logic, and input logic.
+    • It offers full control over your HTML and URLs which makes it easy to design web application architecture.
+    • It is a powerful URL-mapping component using which we can build applications that have comprehensible and searchable URLs.
+    • It supports Test Driven Development (TDD).
+
+Components of MVC :
+    1. Model : The Model component corresponds to all the data-related logic that the user works with. This can represent either the data that is being transferred between the View and Controller components or any other business logic-related data. It can add or retrieve data from the database. It responds to the controller’s request because the controller can’t interact with the database by itself. The model interacts with the database and gives the required data back to the controller.
+
+    2. View : The View component is used for all the UI logic of the application. It generates a user interface for the user. Views are created by the data which is collected by the model component but these data aren’t taken directly but through the controller. It only interacts with the controller.
+
+    3. The controller is the component that enables the interconnection between the views and the model so it acts as an intermediary. The controller doesn’t have to worry about handling data logic, it just tells the model what to do. It processes all the business logic and incoming requests, manipulates data using the Model component, and interact with the View to render the final output.
+
+• Purpose of Exppress.Js : Express JS is a small framework that works on top of Node web server functionality to simplify its APIs and add helpful new features. It makes it easier to organize your application’s functionality with middleware and routing. It adds helpful utilities to Node HTTP objects and facilitates the rendering of dynamic HTTP objects.
+
+• What is node REPL : The Node.js Read-Eval-Print-Loop (REPL) is an interactive shell that processes Node.js expressions. The shell reads JavaScript code the user enters, evaluates the result of interpreting the line of code, prints the result to the user, and loops until the user signals to quit.
+The REPL is bundled with every Node.js installation and allows you to quickly test and explore JavaScript code within the Node environment without having to store it in a file.
+After installing the noe, we can start the RELP by typing 'node' in the terminal. To close the REPL, we need to type "ctrl + c" two times.
+
+• What is ment by callback in node : A callback in Node is a non-blocking function that executes upon task completion, enabling asynchronous processing. It facilitates scalability by allowing Nodejs to handle multiple requests without waiting for operations to conclude, for example in file I/O scenarios.
+
+• Routing in Express js : 
+We create our controller functions in "controllers" folder. Lets have a file inside this folder as "demo.js" : 
+    const demoController = (req, res) => {
+        res.status(200).send("This is a demo controller");
+    };
+
+    module.exports = { demoController };
+
+Then we also need a router. We can have a router folder and can have all related routes in it. Let have a file inside this folder as "demoRoutes.js" : 
+    const express = require("express");
+    const router = express.Router();
+
+    const { demoController } = require("../controllers/demoController");
+
+    router.route("/demo").get(demoController);
+
+    module.exports = router;
+
+Now we need to use these routes in our app. So in our "App.js" of in our "index.js" we have : 
+    const express = require("express");
+    const demo_routes = require("./routes/demo");
+
+    const app = express();
+
+    const PORT = process.env.PORT || 3000;
+
+    app.use("/api", demo_routes);
+
+    app.listen(PORT, () => {
+        console.log("App is running on", PORT);
+    });
+
+• Node middlewares : The middleware in node. js is a function that will have all the access for requesting an object, responding to an object, and moving to the next middleware function in the application request-response cycle. Eg. : 
+    const app = express();
+
+    function logger(req, res, next) {
+        console.log("log");
+        next();
+    }
+
+    app.use(logger); //This is how we add a global middleware which gets applied to all the requests. It is always places on top of all the actions (like app.get and app.post etc) otherwise it wont't get applied.
+
+    app.get("/", (req, res) => {
+    res.json({ message: "Hello World" });
+    });
+
+If we need to apply the middleware to a specific action, we can apply it as : 
+
+    function auth(req, res, next) { // this is the middleware
+        console.log("auth");
+        next();
+    }
+
+    app.get("/test", auth, (req, res) => { //this is how we apply it.
+        res.json({ message: "test" });
+    });
+
+• RESTFul API : A RESTful API, or Representational State Transfer API, is an interface that two computer systems use to exchange information securely over the internet. RESTful APIs are commonly used in web and mobile applications to retrieve or modify resources and data on remote systems.
+
+• Event Loop in Node.Js : It is a C program and is a part of LibUV. It is a design pattern that orchestratesor co-ordinates the execution of synchronous and asynchronous code in Node Js. An event loop is a loop that is alive as long as your node application is up and running. In every iteration of the loop, we come across six different queues. Each queue holds one of more callback functions that need to be eventually executed on the call stack. The type of callback functions are different for each queue. Following are the different queues : 
+    1. Timer queue : This contains callbacks associated with setTimeout and setInterval. 
+    
+    2. I/O queue : This contains all the callbacks assiciated with the async methods that we have seen so far. Eg. methods associated with "fs" and "http" modules. 
+    
+    3. Check queue : This contains the callbacks associated with a function called setImmediate. 
+    
+    4. Close queue : This contains callbacks associated with the close event of an async task
+    
+    5. Micro task queue : This is not the part of LibUV. This itself compormises of 2 queues : 
+        a. Next Tick queue : Contains callbacks associated with a function called process.nextTick()
+
+        b. Promise queue : Contains callbacks that are associated with the native promise in the JS. 
+
+For deciding the order of execution, node checks queues in following order :
+    Micro task queue -> Timer Queue -> Micro task queue -> I/O queue -> Micro task queue ->  Check queue-> Micro task queue -> Close queue -> Micro task queue
+
+Basically, the first queue which is checked is the micro task queue and it is also checked after checking any other queue.
+
+• What is CORS : CORS is an acronym for Cross-Origin Resource Sharing. As we know, all web applications have a front end & a back end and they communicate with each other via API's. In most cases, both the front end and the back end are hosted on the same origin. CORS in node.js helps to get resources from external servers. To better understand this, let's review the following analogy.
+Consider our application to be a restaurant. The origin is the address of our restaurant. The front end is the dining area and the back end is the kitchen. Both the dining area and the kitchen are at the same address. This enables them to exchange food and service, or in our case, resources. Now, there could be a case where the guests are feeling sick and they request medicine which needs to be fetched from another address outside of the restaurant. In technical terms, the front end requesting to a back end outside of its origin. Thus, this mechanism where a front-end sends a request to a different back-end for some additional service or resource is known as Cross-Origin Resource Sharing.
+Usually, the front end of an application is only able to make API calls to the back end in its origin. This is known as the Same-Origin Policy and is quite important from a security standpoint. All requests made from the front end of a different origin or to a back end of a different origin will be blocked by the browser. CORS allows us to bypass this policy in case of scenarios where accessing third-party resources becomes necessary.
+To resolve the CORS error, we can install cors module and then add the middleware : 
+    const cors = require('cors')
+    app.use(cors({ origin: 'http://127.0.0.1:5500' })) //Here we will give the url of our front end application
+
+• Hash and Salts : Hashing is the process of converting data into a fixed-length string of numbers and letters, also known as a hash value, using a hash function. So, Password hashing turns your password into a short string of letters and/or numbers using an encryption algorithm. These hashes are stored in the database instead of storing password as plain text and everytime the user tries to login by providing their password, the provided password is hashed using the same cryptographic hash function, and then compared with hash value which is stored in the database.
+This approach is more secure than storing the plain text password. But same passwords will generate same hash value everytime which is not good for security as, if password corresponding to one of the hash values is cracked, then password corresponding to all the accounts with same hash, will be compromised. 
+Also, attackers can use hash tables which is essentially a pre-computed database of hashes. They are created by using random strings and word dictionaries as inputs and compute hash values and store them as outputs. The attackers then do a reverse password lookup by comparing hashed in the table to those from a stolen password database. These type of attacks are good because the hash values are pre calculated and attackers quickly find passwords for multiple accounts.
+So, to add more security, we can use "Salts". A Salt is a value generated by a cryptographically secure function. Unique salt values are added to the input(user passwords) to create unique hash value for every input even if inputs themselves are not unique. 
+So we can store salt values and hash values which are generated after adding the salt. So the attackers won't be able to use hash table attacks 
+
+• Sessions and Cookies : Session is a series of browser requests that come from same client during a given time period. Websites use the 'HTTP Protocol' which is stateless. This means that after each request and respose, the client and server forget everythong about each other. If we want the client and server to remember one another, we can use a session. Sessions contain data about the client allowing the server to keep track of the user. 
+Both cookies and sessions are used to store data across different page loads but cookies are stored in the client where as sessions are stored in the server and as such, sensitive information should not be stored on a cookie as anyone can access it. Instead, sensitive information should be stored on the server by using sessions. 
+When the client is successfully logged in, the server will create a session and store it. The server then responds to the client with a cookie that contains the session's unique Id. This cookie is then sent with every request to the server. The server then looks at the session id in the cookie and looks up the saved session data, usually from a database. 
+Basically, when we send the req to our route, the session middleware is going to initialize a session and then it is going to take that session id and set the cookie equal to that session id. The cookie is then put in the http response header, and that response header is going to go to the browser, the browser is going to receive the response and set the cookie. Now every time we refresh, that cookie will be a part of that request.
+
+Note : A session and a cookie are different in the places that their data is stored. So a cookie has its data stored in the browser and that browser is going to attach that cookie key value pair to every http request that it does. A session on the other hand is going to be stored on the server side. So the sessions generally store a bit bigger types of data. In addition, sessions are advantageous because with a cookie, we can not store any sort of user creadentials or secret information. If we did that, a hacker can easily get ahold of that information and steal personal data. So the benefit of session is basically the fact that we have it on the server side and we are actually authenticating into the session with a secret key.
+
+To use sessions, we need to install 'express-session'
+    const express = require("express");
+    const session = require("express-session");
+    const bodyParser = require("body-parser");
+
+    const app = express();
+
+    app.set("view engine", "ejs");
+
+    app.use(bodyParser.urlencoded({ extended: false }));
+
+    app.use(
+        session({
+            secret: "thisismysecret123",
+            cookie: {
+            sameSite: "strict",
+            },
+        })
+    );
+
+    app.get("/", (req, res) => {
+        req.session.destroy();
+        res.redirect("/login");
+    });
+
+    app.get("/login", (req, res) => {
+        if (req.session.authorized) {
+            res.render("profile", { username: req.session.user.username });
+        } else {
+            res.render("login");
+        }
+    });
+
+    app.post("/login", (req, res) => {
+        const { username } = req.body;
+        console.log(req.body);
+        if (username === "alpha") {
+            req.session.user = {
+            name: "Shourya",
+            age: 28,
+            };
+
+            req.session.authorized = true;
+            res.render("profile", { username });
+        } else {
+            res.render("login");
+        }
+    });
+
+    const port = 3000;
+
+    app.listen(port);
+
+• Passport : It is a middleware that integrates with our Express.js application and handles all of the authentication logic using the specific strategy that we choose to plug into the Passport.js framework. On each HTTP request, Passport will use the "strategy" to determine whether the requestor has permission to view that resource. If the user doesn't have the permission, a "401 Unauthorized Error" is throw. 
+The Passport JS framework abstracts the Login process into 2 separate parts, the “session management” (done by the “Passport JS library” ), and the “authentication” (done by the secondary “Strategy” library eg. “passport-local” or “passport-facebook” or “passport-oauth-google” etc.)
+Each strategy uses the Passport.Js framework as a template. The Passport Local Strategy utilizes Cookies, Express Sessions and some authentication logic. Steps to add passport : 
+    Step 1. Import the libraries into your file
+    Step 2. Initialize Middleware
+    Step 3. Use Passport to define the Authentication Strategy
+    Step 4. Define the “authUser” function to get authenticated Users : The "authUser" is a function that we will define later will contain the steps to authenticate a user, and will return the "authenticated user".
+    Step 5. Serialize and De-Serialize (authenticated) users : 
+        What serialize mean: 
+            a. "express-session" creates a "req.session" object, when it is invoked via app.use(session({..}))
+            b. "passport" then adds an additional object "req.session.passport" to this "req.session".
+            c. All the serializeUser() function does is,
+            receives the "authenticated user" object from the "Strategy" framework, and attach the authenticated user to "req.session.passport.user.{..}"
+            In above case we receive {id: 123, name: "Kyle"} from the done() in the authUser function in the Strategy framework, 
+            so this will be attached as 
+            req.session.passport.user.{id: 123, name: "Kyle"}
+            d. So in effect during "serializeUser", the PassportJS library adds the authenticated user to end of the "req.session.passport" object.
+            This is what is meant by serialization.
+            This allows the authenticated user to be "attached" to a unique session. 
+        What de-serialize mean:
+            1. Passport JS conveniently populates the "userObj" value in the deserializeUser() with the object attached at the end of "req.session.passport.user.{..}"
+            2. When the done (null, user) function is called in the deserializeUser(), Passport JS takes this last object attached to "req.session.passport.user.{..}", and attaches it to "req.user" i.e "req.user.{..}"
+            In our case, since after calling the done() in "serializeUser" we had req.session.passport.user.{id: 123, name: "Kyle"}, 
+            calling the done() in the "deserializeUser" will take that last object that was attached to req.session.passport.user.{..} and attach to req.user.{..} 
+            i.e. req.user.{id: 123, name: "Kyle"}
+            3. So "req.user" will contain the authenticated user object for that session, and you can use it in any of the routes in the Node JS app.
+
+    Step 6. Use passport.authenticate() as middleware on your login route
+    Step 7. Use the “req.isAuthenticated()” function to protect logged in routes
+    Step 8. Use “req.logOut()” to clear the sessions object
+
+Example code : 
+    const express = require("express");
+    const mongoose = require("mongoose");
+    const session = require("express-session");
+    const passport = require("passport");
+    const LocalStrategy = require("passport-local").Strategy;
+    const crypto = require("crypto");
+    const MongoStore = require("connect-mongo");
+
+    const app = express();
+
+    app.set("view engine", "ejs");
+
+    app.use(express.json());
+    app.use(express.urlencoded({ extended: true }));
+
+    function genPassword(password) {
+        var salt = crypto.randomBytes(32).toString("hex");
+        var genHash = crypto
+            .pbkdf2Sync(password, salt, 10000, 64, "sha512")
+            .toString("hex");
+
+        return {
+            salt: salt,
+            hash: genHash,
+        };
+    }
+
+    const customFields = {
+        //Passport uses these values to know about what values are used as username and what as passwords
+        usernameField: "username",
+        passwordField: "password",
+    };
+
+    const strategy = new LocalStrategy(customFields, authUser);
+    passport.use(strategy);
+
+    passport.serializeUser((user, done) => {
+        done(null, user.id);
+    });
+
+    passport.deserializeUser((userId, done) => {
+        User.findById(userId)
+        .then((user) => {
+            done(null, user);
+        })
+        .catch((err) => done(err));
+    });
+
+    const dbString = "mongodb://localhost:27017/my_db";
+
+    const UserSchema = new mongoose.Schema({
+        username: String,
+        hash: String,
+        salt: String,
+        admin: Boolean,
+    });
+
+    const connection = mongoose.createConnection(dbString);
+    const User = connection.model("User", UserSchema);
+
+    const sessionStore = MongoStore.create({
+        client: connection.getClient(),
+        collection: "sessions",
+    });
+
+    app.use(
+        session({
+            secret: "MY_SECRET",
+            resave: false,
+            saveUninitialized: true,
+            store: sessionStore,
+            cookie: {
+            maxAge: 1000 * 60 * 60 * 24,
+            },
+        })
+    );
+
+    app.use(passport.initialize());
+    app.use(passport.session());
+
+    app.get("/", (req, res) => {
+        res.send(
+            '<h3>Home</h3><a href="/register">Register</a><br><a href="/login">Login</a>'
+        );
+    });
+
+    app.get("/login", (req, res, next) => {
+        res.render("login.ejs");
+        });
+        app.get("/register", (req, res, next) => {
+        res.render("signup.ejs");
+    });
+
+    app.post(
+        "/login",
+        passport.authenticate("local", {
+            failureRedirect: "/login-failure",
+            successRedirect: "login-success",
+        })
+    );
+
+    app.post("/register", (req, res, next) => {
+    const saltHash = genPassword(req.body.password);
+
+    const salt = saltHash.salt;
+    const hash = saltHash.hash;
+
+    const newUser = new User({
+        username: req.body.username,
+        hash: hash,
+        salt: salt,
+        admin: true,
+    });
+
+    newUser.save().then((user) => {
+        console.log(user);
+    });
+
+    res.redirect("/login");
+    });
+
+    app.get("/login-success", (req, res, next) => {
+        res.send(
+            '<p>Login success.</p><br><a href="/protected-route">Go to protected route</a><br><a href="/admin-route">Go to admin route</a><br><a href="/logout">Logout</a>'
+        );
+    });
+
+    app.get("/login-failure", (req, res, next) => {
+        res.send("<p>You entered wrong password</p>");
+    });
+
+    app.get("/logout", (req, res, next) => {
+        req.logout((err) => {
+            if (err) return next(err);
+            res.redirect("/login");
+        });
+    });
+
+    app.get("/protected-route", isAuth, (req, res, next) => {
+        res.send(
+            'You made it to the protected route <br><a href="/logout">Logout</a>'
+        );
+    });
+
+    app.get("/admin-route", isAdmin, (req, res, next) => {
+        res.send("You made it to the admin route");
+    });
+
+    app.listen(3000);
+
+    function authUser(username, password, done) {
+        User.findOne({ username: username })
+        .then((user) => {
+        if (!user) return done(null, false);
+
+        const isValid = validPassword(password, user.hash, user.salt);
+
+        if (isValid) return done(null, user);
+        else return done(null, false);
+        })
+        .catch((err) => {
+        done(err);
+        });
+    }
+
+    function validPassword(password, hash, salt) {
+        var hashVerify = crypto
+            .pbkdf2Sync(password, salt, 10000, 64, "sha512")
+            .toString("hex");
+
+        return hash === hashVerify;
+    }
+
+    function isAuth(req, res, next) {
+        if (req.isAuthenticated()) next();
+        else
+            res
+            .status(401)
+            .json({ msg: "You must be authorized in to view this resource." });
+    }
+
+    function isAdmin(req, res, next) {
+        if (req.isAuthenticated() && req.user.admin) next();
+        else
+            res.status(401).json({
+            msg: "You must be authorized in to view this resource because your are not an admin.",
+            });
+    }
+
+. JWT : JSON Web Token is an open standard for securely transferring data within parties using a JSON object. JWT is used for stateless authentication mechanisms for users and providers, this means maintaining sessions on the client side instead of storing sessions on the server. 
+Working of JWT: 
+    Step 1 : Client requests to get authenticated by sending its username and password.
+    Step 2 : If creadentials are good, then server creates a JWT by encrypting the required data with server's private key and sends it to client which can be stored in cookies.
+    Step 3 : Next time when client makes any new request, the JWT automatically get attached to the request header and is sent to the server
+    Step 4 : Server then takes the JWT and decrypts the data using its public key. If the data looks untampered, then the user is authenticated.
+
+Note. Advantage of using JWT over sesion based authentication is that sessions store authentication related data on server only and so we can not create a separate server (other than the main one) just to handle authentication. But when we are using JWT, we can separate the authentication process and normal api functionality into different servers as al the info is in the JWT only (given, both the servers share same secret key) 
+
+Disadvantage of JWT and Refresh token : When we create a token, it has no expiration date. Which means anyone with access to that token will have foreever access to that users account and they can just constantly make requests as if they were that user as long as they have that access token. It's very difficult to secure that because they have infinite and forever access.
+The idea of refresh token is that we save the refresh token to a safe spot and our normal access tokens have a very short expiration date. So that if someone gets access to our access token, they only have access to our account for maybe a few minutes before the access is revoked and then the user must use the refresh token to get a new token. This will also have the same problem of someone stealing our refresh token, but we can create a logout route which deteles a refresh token so that the user can no longer use that refresh token (Essentially it removes it from the list of valid refresh tokens).
+So the main reason to use a refresh token is so that you can use invalidate users that steal access.
+Eg.: 
+    const express = require("express");
+    const jwt = require("jsonwebtoken");
+
+    const app = express();
+
+    const SECRET_KEY = 
+    "e83034d9c8d61d1b2c13e54f001715a3c2cfc9a3994e85e4ea0ffa8163847e72dc1ffb2a3f2b5cc92fc2712c6ffbc6d88f7c928816a1d0741f386af5ae82f671"; //Generate by using 'crypto.randomBytes(64).toString("hex");'
+
+    const REFRESH_TOKEN_KEY =
+    "4638017e32b2a80749a950a8b50785d46250c8270d4f14f2d07a3c9f0b09af6fdea4df4ad2d80eb3702b9d90f152bc1e908b964641772a7e6d1c9b2ff1ff11ba";
+
+    const posts = [
+        {
+            username: "alpha",
+            title: "post 1",
+        },
+        {
+            username: "beta",
+            title: "post 2",
+        },
+    ];
+
+    let validRefreshTokensList = []; // in real app, store it in a DB or a redis cache
+
+    app.set("view engine", "ejs");
+
+    app.use(express.json());
+    app.use(express.urlencoded({ extended: true }));
+
+    app.post("/token", (req, res) => {
+        console.log(req.body);
+        const refreshToken = req.body.token;
+        if (refreshToken === null) return res.sendStatus(401);
+
+        if (validRefreshTokensList.includes(refreshToken)) {
+            jwt.verify(refreshToken, REFRESH_TOKEN_KEY, (err, user) => {
+            if (err) return res.status(403);
+            const accessToken = generateAccessToken({ name: user.name });
+            res.json({ accessToken });
+            });
+        } else {
+            return res.sendStatus(403);
+        }
+    });
+
+    app.get("/posts", authenticateToken, (req, res) => {
+        res.json(posts.filter((post) => post.username === req.user.name));
+    });
+
+    app.get("/login", (req, res) => {
+        res.render("./login.ejs");
+    });
+
+    app.post("/login", (req, res) => {
+        const username = req.body.username;
+        const user = { name: username };
+
+        const accessToken = generateAccessToken(user);
+        const refreshToken = jwt.sign(user, REFRESH_TOKEN_KEY);
+        validRefreshTokensList.push(refreshToken);
+
+        res.json({ accessToken: accessToken, refreshToken: refreshToken });
+        });
+
+        app.delete("/logout", (req, res) => {
+        validRefreshTokensList = validRefreshTokensList.filter(
+            (token) => token != req.body.token
+        );
+
+        res.sendStatus(204);
+    });
+
+    app.listen(3000);
+
+    function authenticateToken(req, res, next) {
+        const authHeader = req.headers["authorization"]; // Will be in format of "Bearer token"
+        const token = authHeader && authHeader.split(" ")[1];
+
+        if (token == null) return res.sendStatus(401);
+
+        jwt.verify(token, SECRET_KEY, (err, user) => {
+            if (err) return res.sendStatus(403);
+
+            req.user = user;
+            next();
+        });
+    }
+
+    function generateAccessToken(user) {
+        return jwt.sign(user, SECRET_KEY, {
+            expiresIn: "10s",
+        });
+    }
+
+• Multer : It is popular regarding file uploading. Multer is a node. js middleware that is used for handling multipart/form-data, which is mostly used as a library for uploading files. Note: Multer will process only those forms which are multipart (multipart/form-data).
+Eg : 
+    const express = require("express");
+    const path = require("path");
+    const multer = require("multer");
+
+    const app = express();
+
+    app.set("view engine", "ejs");
+
+    var storage = multer.diskStorage({
+    destination: function (req, file, cb) {
+        cb(null, "./assets");
+    },
+
+    filename: (req, file, cb) => {
+        console.log(file);
+        cb(null, Date.now() + "_" + path.extname(file.originalname));
+    },
+    });
+
+    const upload = multer({
+    storage: storage,
+    });
+
+    app.use(express.json());
+    app.use(express.urlencoded({ extended: true }));
+
+    app.get("/upload", (req, res) => {
+    res.render("upload");
+    });
+
+    app.post("/upload", upload.single("myUploadedImg"), (req, res) => {
+    res.send("Image Uploaded");
+    });
+
+    app.listen(3000);
+
+And add this to form : 
+     <form method="POST" action="/upload" enctype="multipart/form-data">
+        <input type="file" name="myUploadedImg" />
+        <input type="Submit" />
+    </form>
+ 
+• Websocket : The WebSocket API is an advanced technology that makes it possible to open a two-way interactive communication session between the user's browser and a server. With this API, you can send messages to a server and receive event-driven responses without having to poll the server for a reply.
+WebSocket is bidirectional, a full-duplex protocol that is used in the same scenario of client-server communication, unlike HTTP it starts from ws:// or wss://. It is a stateful protocol, which means the connection between client and server will keep alive until it is terminated by either party (client or server). After closing the connection by either of the client and server, the connection is terminated from both ends. 
+To implement WebSocket in NodeJS, the “socket.io” dependency needs installation.
+Eg. : 
+Server side : 
+    const express = require("express");
+    const app = express();
+    const server = require("http").createServer(app);
+
+    const io = require("socket.io")(server, { cors: { origin: "*" } });
+
+    app.set("view engine", "ejs");
+
+    app.use(express.json());
+    app.use(express.urlencoded({ extended: true }));
+
+    app.get("/chat", (req, res) => {
+    res.render("chat");
+    });
+
+    app.get("/", (req, res) => {
+    res.send("worked");
+    });
+
+    server.listen(3000);
+
+    io.on("connection", (socket) => {
+    socket.on("message", (data) => {
+        socket.broadcast.emit("message", data);
+    });
+    });
+
+Client side (Supposing it is EJS)
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Chat</title>
+        <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+    </head>
+    <body>
+        <input id="inputField" type="text" id="message" name="message" />
+        <button onclick="sendMessage()">Send Message</button>
+
+        <h4 id="messageDisplay"></h4>
+
+        <script>
+        const socket = io("http://localhost:3000");
+
+        socket.on("connection");
+
+        socket.on("message", (data) => {
+            document.getElementById("messageDisplay").innerHTML = data;
+        });
+
+        const sendMessage = () => {
+            const data = document.getElementById("inputField").value;
+            socket.emit("message", data);
+        };
+        </script>
+    </body>
+    </html>
+
+• Util module : This module contains different functions that are very useful but do not belong to a particular module. Eg.: 
+    1. Promisify : This one is basically used for converting a callback based function to a promise based function. Eg: 
+        const util = require("util");
+        const fs = require("fs");
+
+        const readFileSync = util.promisify(fs.readFile);
+
+        readFileSync("./assets/lorem.md", "utf-8").then((data) => console.log(data));
+
+    2. Format : It can format the strings. Eg : 
+        const util = require("util");
+
+        const formatedText = util.format("%s is %d years old", "alpha", 30);
+
+        console.log(formatedText);
+
+    3. Inspect : This is used when we are working with large objects. Eg : 
+        const util = require("util");
+
+        const obj = {
+        name: "alpha",
+        about: {
+            channel: "beta",
+            age: 35,
+        },
+        };
+
+        const inspectObj = util.inspect(obj, { depth: null, colors: true });
+
+        console.log(inspectObj); //prints obj nicely
+
+    4. Inherits : The util.inherits() (Added in v0.3.0) method is an inbuilt application programming interface of the util module in which the constructor inherits the prototype methods from one to another and the prototype of that constructor is set to a new object which is created from superConstructor. Eg: 
+        const EventEmitter = require("events");
+        const util = require("util");
+
+        function smsEmitter() {
+        EventEmitter.call(this);
+        }
+
+        util.inherits(smsEmitter, EventEmitter);
+
+        const mySMSEmitter = new smsEmitter();
+        mySMSEmitter.on("customEvent", () => {
+        console.log("Custom event triggered");
+        });
+
+        mySMSEmitter.emit("customEvent");
+
+• dns module : The DNS module provides a way of performing doamin name resolutions. Eg. : 
+    const dns = require("dns");
+
+    const google = dns.lookup("google.com", (err, address, family) => {
+    console.log(address);
+    });
+
+• Environment variables and .env files : We can use this file to store environment specific configuration or settings for our application. We use this file to avoid hard coding things like database credentials, API keys etc. Eg. : 
+    require("dotenv").config();
+
+    console.log(process.env.PORT);
+
+• Data validation and express-validator : To validate data in the backend we can use a middleware called express-validator.  Eg. : 
+    const { check, validationResult } = require("express-validator");
+
+    app.post(
+        "/login",
+        [
+            check("username", "Email error").isEmail(),
+            check("password", "Password must be at least 6 characters long").isLength({
+            min: 6,
+            }),
+        ],
+        (req, res) => {
+            const errors = validationResult(req);
+            if (!errors.isEmpty()) return res.json(errors);
+            else {
+            const username = req.body.username;
+            res.json({
+                username: username,
+            });
+            }
+        }
+    );
+
+
