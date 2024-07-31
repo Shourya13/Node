@@ -8,43 +8,32 @@ Node also provides APIs  for working with file system paths, HTTP, crypto etc.
 
 • Threads : Whenever we run programs on our computers, we start something called as a "Process". A "Process" is an instance of a computer program that is being executed. Within a single process, we can have multiple "Threads" which can be thought of as a Todo list that has some number of instructions, that need to be executed by the CPU of the computer. This "Thread" is given to the CPU and the CPU will attempt to run every instruction on it one by one. A single "Process" can have multiple threads inside of it. To decide which thread to execute next, we use something called "Scheduling", which refers to out operating system's ability to decide which thread to process at any given instant in time. 
 
-• Event Loop : Whenever we start up a Node program, node automatically creates one thread and then executes all of our code onside of that one single thread. Inside of this single thread, there is something called as Event loop which can be thought of as a control structure that decides what our one thread should be doing at any given point in time. This event loop is the absolute core of evry node program. So each node progran has exactly one event loop. Basic structure of a Node Evnet loop is as follows : 
-    // Node lifecycle starts (let filename of this program be myFile.js)
+• Event Loop : Whenever we start up a Node program, node automatically creates one thread and then executes all of our code onside of that one single thread. Inside of this single thread, there is something called as Event loop which can be thought of as a control structure that decides what our one thread should be doing at any given point in time. This event loop is the absolute core of every node program. So each node progran has exactly one event loop. Basic structure of a Node Evnet loop is as follows : 
+  
+  Event loop has 2 queues : 
+    1. Macro Task Queue
+        a. Timer queue : setTimeout() / SetInterval() callbacks
+        b. I/O queue : I/O callbacks
+        c. Check queue : setImmediate() callbacks
+        d. Close queue : Functions that are added to a queue when a resource is closed. When a resource is closed   by calling the close() method.
 
-    const pendingTimers = [] ; // A list containing 
-    const pendingOSTasks = [] ;
-    const pendingOperations = [] ; 
+    2. Micro Task Queue
+        a. Next Tick queue: This queue is managed by the process.nextTick() method. Callbacks registered with process.nextTick() method.
+        b. Promises queue : When a promise is resolved or rejected, the associated .then() or .catch() callbacks are queued in the promises queue.
 
-    //New timers, tasks, operations are recorded from myFile running.
-    myFile.runContents();
+The flow of execution of callbacks in event loop is : 
 
-    function shouldContinue() {
-        //Inside this function, node performs 3 checks. 
+    1. Any callbacks in the micro task queue are executed. First the tasks in the nextTick queue and then tasks in promise queue.
+    2. Then any callbacks in the timer queue are executed.
+    3. Again any callbacks in the micro task queue are executed. First the tasks in the nextTick queue and then tasks in promise queue.
+    4. Then any callbacks in the I/O queue are executed.
+    5. Again any callbacks in the micro task queue are executed. First the tasks in the nextTick queue and then tasks in promise queue.
+    6. Then any callbacks in the check queue are executed.
+    7. Again any callbacks in the micro task queue are executed. First the tasks in the nextTick queue and then tasks in promise queue.
+    8. Then any callbacks in the close queue are executed.
+    9. Finally, once more, any callbacks in the micro task queue are executed. First the tasks in the nextTick queue and then tasks in promise queue.
 
-        1. Check 1 : Any pending setTimeout, setInterval or setImmediate 
-        2. Check 2 : Any pending OS tasks like server listening to a port.
-        3. Check 3 : Any pending long running operations like 'fs module'
-
-        return pendingTimers.length || pendingOSTasks.length || pendingOperations.length //This means if any of the lists have some tasks, this will return true, else false.
-    }
-
-    //Lets say that entire body of this while loop runs in one 'tick'
-    while(shouldContinue()) {
-        //1. Node looks at the pendingTimers and sees if any functions are are ready to be called. (setTimeout and setInterval)
-
-        //2. Node looks are pendingOSTasks and pendingOperations and calls relevant callbacks.
-
-        //3. During this step, node pauses execution temporarily and during this pause, node just sits around and waits for new events to occur. These can be : 
-            -> whenever a new pendingOSTask is done
-            -> whenever a new pendingOperations is done
-            -> whenever a timer is about to complete
-
-        //4. Node again looks at pendingTimers and at this step, it only looks at functions registered with setImmediate function calls.
-
-        //5. Handle any close events. For example when we use readStream, we can write cleanup code for when the stream reading will be over.
-    }
-
-    // Node exit back to terminal
+Note. Event loop will put callback function in call stack to get executed, only when call stack is empty. The normal flow of execution will not be interupted to run a callback function.
 
 Note : Node event loop is single threaded but some of the node frameworks/ standard libraries are not single threaded as they run outside of our event loop and outside of that single thread. That is, for some standard library function calls, the C++ side of node and libUV decides to do expensive calculations outside of the event loop entirely. In this case, they make use of something called as a "Thread Pool" which is a series of threads which can be used for running computationally intensive tasks. By default, LibUV creates four threads in this thread pool.
 
