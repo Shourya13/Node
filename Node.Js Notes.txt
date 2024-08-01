@@ -941,6 +941,11 @@ Example code :
     }
 
 . JWT : JSON Web Token is an open standard for securely transferring data within parties using a JSON object. JWT is used for stateless authentication mechanisms for users and providers, this means maintaining sessions on the client side instead of storing sessions on the server. 
+JWTs are made up of three parts separated by dots:
+    1. Header: Typically contains the token type (JWT) and the algorithm used
+    2. Payload: Contains claims, such as a user's identity information. the 'iat' property tells us about the time of generation of token.
+    3. Signature: Verifies that the issuer of the JWT is who it says it is and that the message hasn't been changed 
+
 Working of JWT: 
     Step 1 : Client requests to get authenticated by sending its username and password.
     Step 2 : If creadentials are good, then server creates a JWT by encrypting the required data with server's private key and sends it to client which can be stored in cookies.
