@@ -15,7 +15,7 @@ Node also provides APIs  for working with file system paths, HTTP, crypto etc.
         a. Timer queue : setTimeout() / SetInterval() callbacks
         b. I/O queue : I/O callbacks
         c. Check queue : setImmediate() callbacks
-        d. Close queue : Functions that are added to a queue when a resource is closed. When a resource is closed   by calling the close() method.
+        d. Close queue : Functions that are added to a queue when a resource is closed. When a resource is closed by calling the close() method.
 
     2. Micro Task Queue
         a. Next Tick queue: This queue is managed by the process.nextTick() method. Callbacks registered with process.nextTick() method.
